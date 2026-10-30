@@ -1,0 +1,255 @@
+<div class="min-h-screen bg-slate-50 text-slate-900">
+  <header class="border-b border-slate-200 bg-white">
+    <div class="mx-auto flex max-w-6xl items-center gap-3 px-6 py-4">
+      <div class="grid size-9 place-items-center rounded-lg bg-slate-900 font-bold text-white">R</div>
+      <div>
+        <h1 class="text-lg font-semibold leading-tight">Release Orchestrator</h1>
+        <p class="text-xs text-slate-500">Contrôle des cherry-picks entre TNR, Patch et Dev</p>
+      </div>
+    </div>
+  </header>
+
+  <main class="mx-auto max-w-6xl space-y-10 px-6 py-8">
+    <!-- 1. Saisie du graph -->
+    <section>
+      <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-500">1 · Git graph</h2>
+      <div class="mt-3 rounded-xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+        <p class="text-sm text-slate-600">
+          Collez la sortie de
+          <code class="rounded bg-slate-100 px-1.5 py-0.5 text-xs">git log --graph --oneline --all --decorate</code>
+          (les décorations donnent les noms de branches et de tags).
+        </p>
+        <textarea
+          class="mt-3 h-56 w-full resize-y rounded-lg border-0 bg-slate-900 p-4 font-mono text-xs leading-5 text-slate-100 ring-1 ring-slate-300 placeholder:text-slate-500 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+          spellcheck="false"
+          [placeholder]="placeholder"
+          [value]="raw()"
+          (input)="raw.set($any($event.target).value)"
+        ></textarea>
+        <div class="mt-3 flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            (click)="parse()"
+            [disabled]="!raw().trim()"
+            class="cursor-pointer rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Analyser le graph
+          </button>
+          <label class="cursor-pointer text-sm text-slate-600 underline-offset-2 hover:underline">
+            ou charger un fichier
+            <input type="file" class="hidden" (change)="loadFile($event)" />
+          </label>
+          @if (graph(); as g) {
+            <span class="ml-auto text-sm text-slate-500">
+              {{ g.commits.length }} commits · {{ g.branches.length }} branches
+            </span>
+          }
+        </div>
+
+        @if (graph()?.warnings?.length) {
+          <details class="mt-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-800 ring-1 ring-amber-200">
+            <summary class="cursor-pointer font-medium">{{ graph()!.warnings.length }} avertissement(s)</summary>
+            <ul class="mt-2 list-disc space-y-1 pl-5">
+              @for (w of graph()!.warnings; track $index) {
+                <li>{{ w }}</li>
+              }
+            </ul>
+          </details>
+        }
+      </div>
+    </section>
+
+    <!-- 2. Choix des branches -->
+    @if (graph(); as g) {
+      @if (g.branches.length) {
+        <section>
+          <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-500">2 · Branches de référence</h2>
+          <div class="mt-3 grid gap-4 md:grid-cols-3">
+            @for (r of roles.slice().reverse(); track r) {
+              <label class="block rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
+                <span class="rounded-full px-2.5 py-0.5 text-xs font-semibold ring-1" [class]="chip[r]">
+                  Branche {{ label[r] }}{{ r === 'dev' ? '' : ' (facultative)' }}
+                </span>
+                <select
+                  class="mt-3 w-full rounded-lg border-0 bg-slate-50 px-3 py-2 font-mono text-sm ring-1 ring-slate-300 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  (change)="pick(r, $any($event.target).value)"
+                >
+                  <option value="" [selected]="!selection()[r]">{{ r === 'dev' ? '— choisir —' : '— aucune —' }}</option>
+                  @for (b of g.branches; track b.name) {
+                    <option [value]="b.name" [selected]="b.name === selection()[r]">{{ b.name }}</option>
+                  }
+                </select>
+              </label>
+            }
+          </div>
+          @if (duplicate()) {
+            <p class="mt-3 text-sm text-rose-600">Les trois branches doivent être différentes.</p>
+          }
+          <label class="mt-4 block rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
+            <span class="text-sm font-medium text-slate-700">Ignorer les commits contenant un mot-clé</span>
+            <input
+              type="text"
+              class="mt-2 w-full rounded-lg border-0 bg-slate-50 px-3 py-2 text-sm ring-1 ring-slate-300 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+              placeholder="ex : [skip-pick], bump version, wip (séparés par des virgules)"
+              [value]="ignoreText()"
+              (input)="ignoreText.set($any($event.target).value)"
+            />
+            @if (analysis(); as a) {
+              @if (keywords().length) {
+                <span class="mt-1 block text-xs text-slate-500">{{ a.ignoredCount }} commit(s) ignoré(s)</span>
+              }
+            }
+          </label>
+        </section>
+      } @else {
+        <p class="rounded-xl bg-rose-50 p-4 text-sm text-rose-700 ring-1 ring-rose-200">
+          Aucune branche détectée. Utilisez bien l'option <code>--decorate</code> pour que les noms apparaissent.
+        </p>
+      }
+    }
+
+    <!-- 3. Rapport -->
+    @if (analysis(); as a) {
+      <div class="flex flex-wrap items-center justify-end gap-2">
+        <span class="mr-auto text-sm font-semibold uppercase tracking-wide text-slate-500">Rapport</span>
+        <span class="text-sm text-slate-500">Exporter :</span>
+        @for (f of formats; track f.id) {
+          <button
+            type="button"
+            [disabled]="exporting()"
+            (click)="export(f.id)"
+            class="cursor-pointer rounded-lg bg-white px-3 py-1.5 text-sm font-medium text-slate-700 shadow-sm ring-1 ring-slate-300 hover:bg-slate-100 disabled:cursor-wait disabled:opacity-50"
+          >
+            {{ f.label }}
+          </button>
+        }
+        @if (exporting()) {
+          <span class="text-sm text-slate-500">Génération…</span>
+        }
+      </div>
+
+      <div #report class="space-y-10 bg-slate-50 p-2">
+      <header class="rounded-xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+        <h2 class="text-lg font-semibold">Rapport de release</h2>
+        <p class="mt-1 text-sm text-slate-500">
+          {{ today }} · Dev : <code>{{ selection().dev }}</code>
+          @if (selection().patch) {
+            · Patch : <code>{{ selection().patch }}</code>
+          }
+          @if (selection().tnr) {
+            · TNR : <code>{{ selection().tnr }}</code>
+          }
+        </p>
+      </header>
+
+      <section class="space-y-4">
+        <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-500">3 · État des versions</h2>
+        <app-versions-panel [versions]="a.versions" />
+      </section>
+
+      <section class="space-y-4">
+        <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-500">Historique des montées de version</h2>
+        <app-releases-table [versions]="a.versions" />
+      </section>
+
+      <section class="space-y-4">
+        <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-500">4 · Bilan des cherry-picks</h2>
+        <div class="grid gap-4 sm:grid-cols-3">
+          <div class="rounded-xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+            <p class="text-3xl font-bold">{{ a.totals.checked }}</p>
+            <p class="text-sm text-slate-500">cherry-picks attendus</p>
+          </div>
+          <div class="rounded-xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+            <p class="text-3xl font-bold text-emerald-600">{{ a.totals.ok }}</p>
+            <p class="text-sm text-slate-500">déjà effectués</p>
+          </div>
+          <div
+            class="rounded-xl p-5 shadow-sm ring-1"
+            [class]="a.totals.missing ? 'bg-rose-50 ring-rose-200' : 'bg-emerald-50 ring-emerald-200'"
+          >
+            <p class="text-3xl font-bold" [class]="a.totals.missing ? 'text-rose-600' : 'text-emerald-600'">
+              {{ a.totals.missing }}
+            </p>
+            <p class="text-sm text-slate-600">manquant{{ a.totals.missing > 1 ? 's' : '' }}</p>
+          </div>
+        </div>
+
+        <h3 class="pt-2 text-base font-semibold">À cherry-pick</h3>
+        <app-todo-panel [analysis]="a" [branches]="selection()" />
+      </section>
+
+      <section class="space-y-4">
+        <div class="flex flex-wrap items-center gap-3">
+          <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-500">5 · Détail par branche</h2>
+          <label data-no-export class="ml-auto flex cursor-pointer items-center gap-2 text-sm text-slate-600">
+            <input
+              type="checkbox"
+              class="size-4 accent-indigo-600"
+              [checked]="onlyMissing()"
+              (change)="onlyMissing.set($any($event.target).checked)"
+            />
+            Afficher uniquement les commits manquants
+          </label>
+        </div>
+
+        @for (s of a.sources; track s.name) {
+          @if (!onlyMissing() || s.checks.length) {
+            <app-source-report
+              [report]="s"
+              [roles]="a.roles"
+              [onlyMissing]="onlyMissing()"
+              (rootChange)="setRoot(s.name, $event)"
+              (ignoreCommit)="ignoreCommit($event)"
+            />
+          }
+        } @empty {
+          <p class="text-sm text-slate-500">Aucune branche à contrôler.</p>
+        }
+
+        @if (ignoredCommits().length) {
+          <details class="rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
+            <summary class="cursor-pointer text-sm font-medium text-slate-700">
+              {{ ignoredCommits().length }} cherry-pick(s) ignoré(s) manuellement
+            </summary>
+            <ul class="mt-3 divide-y divide-slate-100">
+              @for (c of ignoredCommits(); track c!.id) {
+                <li class="flex items-center gap-3 py-2 text-sm">
+                  <code class="text-xs text-slate-500">{{ c!.id }}</code>
+                  <span class="flex-1 truncate">{{ c!.subject }}</span>
+                  <button
+                    type="button"
+                    (click)="restoreCommit(c!.id)"
+                    class="cursor-pointer rounded-md px-2 py-0.5 text-xs text-indigo-600 ring-1 ring-indigo-200 hover:bg-indigo-50"
+                  >
+                    Rétablir
+                  </button>
+                </li>
+              }
+            </ul>
+          </details>
+        }
+
+        @if (a.untaggedFeatures.length) {
+          <p class="text-xs text-slate-500">
+            Branches de travail sans tag, ignorées ({{ a.untaggedFeatures.length }}) :
+            {{ a.untaggedFeatures.join(', ') }}
+          </p>
+        }
+
+        @if (a.mergedFeatures.length) {
+          <p class="text-xs text-slate-500">
+            Déjà intégrées à leur branche racine (rien à vérifier) :
+            {{ a.mergedFeatures.join(', ') }}
+          </p>
+        }
+
+        <p class="rounded-lg bg-slate-100 p-3 text-xs leading-5 text-slate-500">
+          Le git graph ne contient pas les diffs : un cherry-pick est reconnu quand un commit de même message existe
+          sur la branche cible (suffixes <code>(cherry picked from…)</code> et <code>(#123)</code> ignorés). Les
+          commits de merge ne sont pas contrôlés.
+        </p>
+      </section>
+      </div>
+    }
+  </main>
+</div>
