@@ -2,9 +2,12 @@ import { Component, computed, input, output } from '@angular/core';
 import { ROLES, ROLE_LABEL, type Role } from '../core/models';
 import { ROLE_CHIP } from '../core/role-style';
 import type { SourceReport } from '../core/analysis';
+import { CopyButton } from './copy-button';
 
 @Component({
   selector: 'app-source-report',
+  host: { class: 'block' },
+  imports: [CopyButton],
   template: `
     <section class="overflow-hidden rounded-xl bg-white shadow-sm ring-1 ring-slate-200">
       <header class="flex flex-wrap items-center gap-3 border-b border-slate-200 bg-slate-50 px-5 py-3">
@@ -35,10 +38,11 @@ import type { SourceReport } from '../core/analysis';
           {{ missingCount() ? missingCount() + ' commit(s) incomplet(s)' : 'Tout est cherry-pické' }}
           · {{ report().checks.length }} commit(s)
         </span>
+        <app-copy-button [table]="t" />
       </header>
 
       <div class="overflow-x-auto">
-        <table class="w-full text-left text-sm">
+        <table #t class="w-full text-left text-sm">
           <thead class="text-xs uppercase tracking-wide text-slate-500">
             <tr>
               <th class="px-5 py-2 font-medium">Commit</th>

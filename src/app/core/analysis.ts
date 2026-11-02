@@ -1,5 +1,5 @@
 import type { Commit, ParsedGraph, Role, RoleBranches } from './models';
-import { ROLES, ROLE_TARGETS } from './models';
+import { ROLES, ROLE_LABEL, ROLE_TARGETS } from './models';
 
 export interface TargetCheck {
   role: Role;
@@ -7,6 +7,8 @@ export interface TargetCheck {
   present: boolean;
   /** Commit équivalent trouvé sur la branche cible. */
   matchId?: string;
+  /** Message du commit équivalent trouvé sur la branche cible. */
+  matchSubject?: string;
   /** true : le commit est directement un ancêtre de la branche cible (pas besoin de cherry-pick). */
   byAncestry: boolean;
 }
@@ -60,10 +62,29 @@ export interface VersionInfo {
   pending: Commit[];
 }
 
+export interface TimelineColumn {
+  key: string;
+  title: string;
+  branch: string;
+}
+
+export interface TimelineRow {
+  tag: string;
+  /** Version de chaque colonne à ce moment-là ; undefined tant que la branche n'a aucune version. */
+  cells: (string | undefined)[];
+}
+
+/** Évolution des versions de chaque branche, une ligne par tag, du plus ancien au plus récent. */
+export interface VersionTimeline {
+  columns: TimelineColumn[];
+  rows: TimelineRow[];
+}
+
 export interface Analysis {
   /** Rôles effectivement renseignés (dev toujours, patch et TNR facultatifs). */
   roles: Role[];
   versions: VersionInfo[];
+  timeline: VersionTimeline;
   sources: SourceReport[];
   /** Branches sans commit propre (déjà fusionnées dans leur racine). */
   mergedFeatures: string[];
@@ -79,7 +100,7 @@ export interface Analysis {
 const REMOTE_PREFIX = /^(origin|upstream)\//;
 export const localName = (name: string) => name.replace(REMOTE_PREFIX, '');
 
-const normalizeSubject = (s: string) =>
+export const normalizeSubject = (s: string) =>
   s
     .replace(/\s*\(cherry[- ]picked from commit [0-9a-f]+\)\s*$/i, '')
     .replace(/\s*\(#\d+\)\s*$/, '')
@@ -110,6 +131,13 @@ function compareSemVer(a: SemVer, b: SemVer): number {
   if (!b.pre) return -1;
   return a.pre.localeCompare(b.pre, undefined, { numeric: true });
 }
+
+/** Tri des tags du plus récent au plus ancien. */
+const byVersion = (a: string, b: string) => {
+  const va = parseSemVer(a);
+  const vb = parseSemVer(b);
+  return va && vb ? compareSemVer(vb, va) : va ? -1 : vb ? 1 : 0;
+};
 
 class GraphIndex {
   private readonly cache = new Map<string, Set<string>>();
@@ -146,6 +174,11 @@ class GraphIndex {
     const hit = this.keywords.some((k) => subject.includes(k));
     if (hit) this.ignored++;
     return hit;
+  }
+
+  /** Position dans le git log : plus elle est grande, plus le commit est ancien. */
+  positionOf(id: string) {
+    return this.position.get(id) ?? Infinity;
   }
 
   isMerge(c: Commit) {
@@ -197,11 +230,6 @@ function computeVersion(ix: GraphIndex, role: Role, branch: string, tip: string)
     return { role, branch, tip, commitsSince: ix.ancestors(tip).size, onTag: false, recentTags: [], history: [], pending: [] };
   }
 
-  const byVersion = (a: string, b: string) => {
-    const va = parseSemVer(a);
-    const vb = parseSemVer(b);
-    return va && vb ? compareSemVer(vb, va) : va ? -1 : vb ? 1 : 0;
-  };
   const nearest = tagged[0];
   const lastTag = nearest.tags.slice().sort(byVersion)[0];
 
@@ -303,9 +331,9 @@ export function analyze(
   const check = (commit: Commit, targets: Role[]): CommitCheck => {
     const results: TargetCheck[] = targets.map((role) => {
       const branch = selection[role];
-      if (anc[role].has(commit.id)) return { role, branch, present: true, matchId: commit.id, byAncestry: true };
+      if (anc[role].has(commit.id)) return { role, branch, present: true, matchId: commit.id, matchSubject: commit.subject, byAncestry: true };
       const match = subjects[role].get(normalizeSubject(commit.subject));
-      return { role, branch, present: !!match, matchId: match?.id, byAncestry: false };
+      return { role, branch, present: !!match, matchId: match?.id, matchSubject: match?.subject, byAncestry: false };
     });
     return { commit, targets: results, missing: results.filter((t) => !t.present).map((t) => t.role) };
   };
@@ -340,6 +368,7 @@ export function analyze(
     return true;
   });
 
+  const featureOwn = new Map<string, { tip: string; own: Set<string> }>();
   const mergedFeatures: string[] = [];
   const untaggedFeatures: string[] = [];
   for (const b of featureBranches) {
@@ -364,6 +393,7 @@ export function analyze(
       continue;
     }
     sources.push({ kind: 'feature', name: b.name, tip: b.tip, root, autoRoot, targets, checks });
+    featureOwn.set(b.name, { tip: b.tip, own });
   }
 
   const todoSets: Record<Role, Map<string, Commit>> = { tnr: new Map(), patch: new Map(), dev: new Map() };
@@ -393,6 +423,23 @@ export function analyze(
       .slice()
       .reverse()
       .map((r) => computeVersion(ix, r, selection[r], tips[r])),
+    timeline: buildTimeline(ix, [
+      ...(['dev', 'tnr', 'patch'] as Role[])
+        .filter((r) => active.includes(r))
+        .map((r) => ({
+          key: r,
+          title: `sur ${ROLE_LABEL[r]}`,
+          branch: selection[r],
+          commits: taggedChain(ix, tips[r]),
+        })),
+      // Une feature n'est comptée qu'à partir de ses propres tags, pas de ceux de sa branche racine.
+      ...[...featureOwn].map(([name, f]) => ({
+        key: `f:${name}`,
+        title: name,
+        branch: '',
+        commits: taggedChain(ix, f.tip, f.own),
+      })),
+    ]),
     sources,
     mergedFeatures,
     untaggedFeatures,
@@ -400,6 +447,41 @@ export function analyze(
     totals: { checked, ok, missing: checked - ok },
     todo,
   };
+}
+
+/** Commits portant un tag sur le premier parent de `tip`, du plus récent au plus ancien. */
+function taggedChain(ix: GraphIndex, tip: string, only?: ReadonlySet<string>): Commit[] {
+  const out: Commit[] = [];
+  const seen = new Set<string>();
+  for (let id: string | undefined = tip; id && !seen.has(id); ) {
+    seen.add(id);
+    const c = ix.graph.byId.get(id);
+    if (!c) break;
+    if (c.tags.length && (!only || only.has(id))) out.push(c);
+    id = c.parents[0];
+  }
+  return out;
+}
+
+function buildTimeline(ix: GraphIndex, cols: (TimelineColumn & { commits: Commit[] })[]): VersionTimeline {
+  const columns = cols.filter((c) => c.key.startsWith('f:') ? c.commits.length : true);
+  const events = new Map<string, number>();
+  for (const col of columns) {
+    for (const c of col.commits) for (const t of c.tags) events.set(t, ix.positionOf(c.id));
+  }
+  // Plus l'index est grand, plus le commit est ancien ; à égalité, la version la plus basse d'abord.
+  const tags = [...events.keys()].sort((a, b) => events.get(b)! - events.get(a)! || -byVersion(a, b));
+
+  const rows = tags.map((tag) => {
+    const pos = events.get(tag)!;
+    const cells = columns.map((col) => {
+      if (col.commits.some((c) => c.tags.includes(tag))) return tag;
+      const latest = col.commits.find((c) => ix.positionOf(c.id) >= pos);
+      return latest?.tags.slice().sort(byVersion)[0];
+    });
+    return { tag, cells };
+  });
+  return { columns: columns.map(({ key, title, branch }) => ({ key, title, branch })), rows };
 }
 
 function difference(base: Set<string>, ...others: Set<string>[]): Set<string> {

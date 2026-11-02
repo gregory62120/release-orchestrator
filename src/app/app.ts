@@ -4,9 +4,11 @@ import { exportReport, type ExportFormat } from './core/export-report';
 import { parseGitGraph } from './core/graph-parser';
 import { ROLES, ROLE_LABEL, type ParsedGraph, type Role, type RoleBranches } from './core/models';
 import { ROLE_CHIP } from './core/role-style';
+import { CommitMatrix } from './ui/commit-matrix';
 import { ReleasesTable } from './ui/releases-table';
 import { SourceReportView } from './ui/source-report';
 import { TodoPanel } from './ui/todo-panel';
+import { VersionMatrix } from './ui/version-matrix';
 import { VersionsPanel } from './ui/versions-panel';
 
 const PLACEHOLDER = `*   1824a97 (HEAD -> develop) Merge feature/x
@@ -27,7 +29,7 @@ function loadIgnored(): Set<string> {
 
 @Component({
   selector: 'app-root',
-  imports: [VersionsPanel, ReleasesTable, TodoPanel, SourceReportView],
+  imports: [VersionsPanel, ReleasesTable, TodoPanel, SourceReportView, CommitMatrix, VersionMatrix],
   templateUrl: './app.html',
 })
 export class App {
