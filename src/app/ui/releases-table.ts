@@ -2,11 +2,14 @@ import { Component, input } from '@angular/core';
 import { ROLE_LABEL } from '../core/models';
 import { ROLE_CHIP } from '../core/role-style';
 import type { VersionInfo } from '../core/analysis';
+import { CopyButton } from './copy-button';
 
 const MAX_COMMITS_SHOWN = 6;
 
 @Component({
   selector: 'app-releases-table',
+  host: { class: 'block' },
+  imports: [CopyButton],
   template: `
     <div class="space-y-5">
       @for (v of versions(); track v.role) {
@@ -24,7 +27,8 @@ const MAX_COMMITS_SHOWN = 6;
           </header>
 
           @if (v.history.length) {
-            <table class="w-full text-left text-sm">
+            <div class="flex justify-end px-5 py-2"><app-copy-button [table]="t" /></div>
+            <table #t class="w-full text-left text-sm">
               <thead class="text-xs uppercase tracking-wide text-slate-500">
                 <tr>
                   <th class="w-64 px-5 py-2 font-medium">Version</th>
