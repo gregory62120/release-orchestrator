@@ -149,6 +149,7 @@
 
       <section class="space-y-4">
         <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-500">Historique des montées de version</h2>
+        <app-version-matrix [timeline]="a.timeline" />
         <app-releases-table [versions]="a.versions" />
       </section>
 
@@ -179,8 +180,27 @@
       </section>
 
       <section class="space-y-4">
+        <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-500">5 · Matrice des commits par branche</h2>
+        @if (a.sources.length) {
+          <app-commit-matrix
+            title="Récapitulatif — toutes les branches"
+            [reports]="a.sources"
+            [roles]="a.roles"
+            [branches]="selection()"
+          />
+        }
+        @for (s of a.sources; track s.name) {
+          @if (s.checks.length) {
+          <app-commit-matrix [title]="s.name" [role]="s.root" [reports]="[s]" [roles]="a.roles" [branches]="selection()" />
+          }
+        } @empty {
+          <p class="text-sm text-slate-500">Aucune branche à contrôler.</p>
+        }
+      </section>
+
+      <section class="space-y-4">
         <div class="flex flex-wrap items-center gap-3">
-          <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-500">5 · Détail par branche</h2>
+          <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-500">6 · Détail par branche</h2>
           <label data-no-export class="ml-auto flex cursor-pointer items-center gap-2 text-sm text-slate-600">
             <input
               type="checkbox"
